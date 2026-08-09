@@ -1,0 +1,70 @@
+name: Test Automation Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to run against'
+        required: true
+        default: 'qa'
+        type: choice
+        options: [qa, staging, prod]
+
+jobs:
+  smoke:
+    name: Smoke suite (fast gate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Run smoke tests
+        env:
+          TEST_ENV: ${{ github.event.inputs.environment || 'qa' }}
+        run: npx playwright test --project=smoke-chromium
+
+  regression:
+    name: Regression suite (${{ matrix.browser }})
+    needs: smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npx playwright install --with-deps
+
+      - name: Run regression suite
+        env:
+          TEST_ENV: ${{ github.event.inputs.environment || 'qa' }}
+        run: npx playwright test --project=regression-${{ matrix.browser }}
+
+      - name: Upload HTML report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report-${{ matrix.browser }}
+          path: playwright-report/
+          retention-days: 14
+
+      - name: Upload JUnit results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: junit-results-${{ matrix.browser }}
+          path: test-results/junit-report.xml
+          retention-days: 14
